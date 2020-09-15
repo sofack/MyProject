@@ -1,0 +1,665 @@
+---
+title: "Research seminar"
+author: "SOFACK GHISLAIN(264513)"
+date: "29/08/2020"
+output: html_document
+---
+#Project title: Bioanalytical method Validation of Mass spectrometry analysis using R
+
+#Supervisors: Frau Helga Weinscrott, Prof.Dr. Matthias Kohl
+
+
+
+# Reading the data
+```{r}
+GA = read.csv2("GA.csv", header = TRUE, dec =",", stringsAsFactors= TRUE)  
+
+# exracted just the data of the first analyte Glutaric Acid (GA) to work with.
+
+```
+
+
+
+
+# Creating a df for calculated conc. HSA 
+```{r}
+
+a = GA$Calculated.Concentration[grep("HSA", GA$Sample.Name)]
+
+b = factor(GA$Sample.Name[grep("HSA", GA$Sample.Name)])
+
+
+
+mat1 = do.call("rbind", split(a,b))
+
+mat1[mat1 == 0] <- NA
+
+View(mat1)
+
+
+mat1 = data.frame(mat1)
+
+
+
+
+mat1$Mean_HSA_uM = rowMeans(mat1, na.rm = TRUE) 
+
+mat1$Stdabwn_uM = apply(mat1,1, sd, na.rm = TRUE) 
+
+library("MKinfer")
+
+CV <- function(x){ n <- length(x[!is.na(x)])
+sqrt((n-1)/n)*sd( x, na.rm = TRUE)/mean(x, na.rm = TRUE)}
+
+mat1$CV = apply((mat1[,1:(ncol(mat1)-2)]),1,CV)*100 
+
+
+
+
+f <- function(x){ 
+  n <- length(x[!is.na(x)])
+  if(n>1) 
+    res = ((sd(x, na.rm = TRUE) *qt(0.975, df = n-1))/(sqrt(n-1)*mean(x, na.rm = TRUE))) 
+  else
+    res = 0
+  res
+  } 
+
+mat1$f = apply((mat1[,1:(ncol(mat1)-3)]),1,f)*100 
+
+
+View(mat1)
+
+
+
+```
+
+
+
+# Creating a df for calculated S/N Human Serum Albumin 
+```{r}
+
+
+C = GA$Signal...Noise[grep("HSA", GA$Sample.Name)]
+
+d = factor(GA$Sample.Name[grep("HSA", GA$Sample.Name)])
+
+C = C[!d%in%c("HSA6", "HSA7")]
+
+d = factor(d[!d%in%c("HSA6", "HSA7")])
+
+
+
+
+mat2 = do.call("rbind", split(C,d))
+mat2[mat2 == 0] <- NA
+
+View(mat2)
+
+
+mat2 = data.frame(mat2)
+
+
+mat2$Mean_SN = rowMeans(mat2, na.rm = TRUE)
+
+mat2$Stdabwn_uM = apply(mat2,1, sd, na.rm = TRUE) 
+
+View(mat2)
+
+```
+
+
+
+# Creating a df for act vs calc conc S 
+```{r}
+
+f = c("Sd", "Sc", "Sb", "Sa", "S1", "S2", "S3", "S4", "S5", "S6", "S7")
+
+ind = which(GA$Sample.Name%in%f) 
+  
+mat3 = data.frame(c(GA$Actual.Concentration[ind]),c(GA$Calculated.Concentration[ind]))
+colnames(mat3) = c("act_conc_S", "calc_conc_S") 
+rownames(mat3) = GA$Sample.Name[ind]
+
+View(mat3)
+```
+
+
+
+
+
+
+# RECOVERY CALCULATION 
+
+#1.) Linear adjustment of the calc.conc S vs act.conc S 
+```{r}
+
+f = c("Sa", "S1", "S2", "S3", "S4", "S5", "S6", "S7")
+
+ind = which(rownames(mat3)%in%f) 
+
+
+fit1 <- lm(mat3$calc_conc_S[ind] ~ mat3$act_conc_S[ind] )
+
+summary(fit1) 
+
+
+coef(fit1)[2] # Slope/steigung ~ 99% sensitivity (lowest concentration that can be measured with an acceptable limit of accuracy and precision)
+
+summary(fit1)$coefficients[,4]  #p-values  sig. i.e the model is explained by the proposed regression
+
+summary(fit1)$r.squared # R-squared (Recovery)  # r2>0.999 indicates recovery rate of close to 100% .
+
+summary(fit1)$coefficients[2,2] # S.E   
+
+(summary(fit1)$coefficients[2,2]/coef(fit1)[2])*100 ### S.E / slope (relativer Intra-Assay-Fehler der Wiederfindungsrate) # i.e <20% (FDA guideline)  --- <2% (accept)...the lower the r2 the grater the error and vice
+
+  
+# As expected, the recovery rates of analytes in acqeous solution is almost at 100 %
+
+
+
+#Robust fit
+
+
+library("robustbase")
+
+fit1_rob = lmrob(mat3$calc_conc_S[ind] ~ mat3$act_conc_S[ind])
+summary(fit1_rob)
+
+
+coef(fit1_rob)[2] 
+
+summary(fit1_rob)$coefficients[,4]  
+
+summary(fit1_rob)$r.squared 
+
+summary(fit1_rob)$coefficients[2,2]  
+
+(summary(fit1_rob)$coefficients[2,2]/coef(fit1_rob)[2])*100 
+
+
+
+```
+
+
+
+
+
+
+#2.) Linear adjustment of the mean HSA vs act.conc S 
+```{r}
+
+
+
+f = c("Sd", "Sc", "Sb", "Sa", "S1", "S2", "S3", "S4", "S5", "S6", "S7")
+
+ind = which(GA$Sample.Name%in%f) 
+
+
+f1 = c("HSAd", "HSAc", "HSAb", "HSAa","HSA1", "HSA2", "HSA3", "HSA4", "HSA5", "HSA6", "HSA7")
+
+ind1 = which(rownames(mat1)%in%f1) 
+
+
+mat4 = data.frame(c(GA$Actual.Concentration[ind]),c(GA$Calculated.Concentration[ind]), c(mat1$Mean_HSA_uM[ind1]))
+
+colnames(mat4) = c("act_conc_S", "calc_conc_S", "mean_HSA_uM")
+
+
+View(mat4)
+
+
+
+fit2 <- lm(mat4$mean_HSA_uM ~ mat4$act_conc_S)
+
+summary(fit2)
+
+coef(fit2)[2] # steigung/coefficients ~ 98% sensistivity
+
+summary(fit2)$coefficients[,4]  #pvals
+
+summary(fit2)$r.squared # R-squared ~ strong positiv
+
+
+summary(fit2)$coefficients[2,2] # S.E
+
+(summary(fit2)$coefficients[2,2]/coef(fit2)[2])*100 # S.E / slope  ~ < 1% (very accurate)
+
+# Recovery rate of GA in serum/ plasma is found to be at 99% (good). Systematic deviations, such as with citric acid,  indicate that there are effects in the real samples that  prevent the analyte from being extracted 100%:  e.g. it may be that citric acid binds to various proteins etc. in the biological plasma and therefore cannot be extracted as well.
+
+# FDA gudeline: The recovery need not to be 100%, but should be concise, precise and reproducible.
+
+
+
+
+
+
+
+
+#Robust fit
+
+
+fit2_rob = lmrob(mat4$mean_HSA_uM ~ mat4$act_conc_S)
+summary(fit2_rob)
+
+
+coef(fit2_rob)[2] 
+
+summary(fit2_rob)$coefficients[,4]  
+
+summary(fit2_rob)$r.squared 
+
+summary(fit2_rob)$coefficients[2,2]  
+
+(summary(fit2_rob)$coefficients[2,2]/coef(fit2_rob)[2])*100 
+
+
+
+```
+
+
+
+
+
+
+# Ploting the Recovery (calc.conc.S and calc.conc.HSA against act_conc_ S )
+```{r}
+
+x = mat3$act_conc_S[ind]
+y1=mat4$mean_HSA_uM[ind1]
+y2=mat3$calc_conc_S[ind]
+
+plot(x,y1)
+plot(x,y2)
+
+data1 = cbind(x,y1)
+data2 = cbind(x, y2)
+
+
+plot(y2 ~ x, data=data2,col='blue')
+abline(lm(y2 ~ x),col ='blue')
+
+points(y1 ~ x, data = data1,col='orange')
+abline(lm(y1 ~ x),col='orange')
+
+# linear range is from 0-50 uM
+```
+
+
+
+
+
+
+#3.) Linear adjustment of the mean HSA vs calc.conc S
+```{r}
+
+f = c("Sa", "S1", "S2", "S3", "S4", "S5", "S6", "S7")
+
+ind = which(GA$Sample.Name%in%f) 
+
+
+f1 = c("HSAa","HSA1", "HSA2", "HSA3", "HSA4", "HSA5", "HSA6", "HSA7")
+
+ind1 = which(rownames(mat1)%in%f1) 
+
+
+
+fit3 <- lm(mat4$mean_HSA_uM[ind1] ~ mat4$calc_conc_S[ind])
+
+summary(fit3)
+
+coef(fit3)[2] # steigung / slope ~ 99% sensitive
+
+summary(fit3)$coefficients[,4]  #pvals
+
+summary(fit3)$r.squared # R-squared ...Internal criteria is that r2 !< 0.99
+
+summary(fit3)$coefficients[2,2] # S.E
+
+(summary(fit3)$coefficients[2,2]/coef(fit3)[2])*100 # S.E / slope = >2%
+
+
+# The analyte GA can be extracted with acceptable limit of accuracy and precision
+
+
+
+
+
+#Robust fit
+
+
+fit3_rob = lmrob(mat4$mean_HSA_uM[ind1] ~ mat4$calc_conc_S[ind])
+
+summary(fit3_rob)
+
+coef(fit3_rob)[2] 
+
+summary(fit3_rob)$coefficients[,4]  
+
+summary(fit3_rob)$r.squared 
+
+summary(fit3_rob)$coefficients[2,2]  
+
+(summary(fit3_rob)$coefficients[2,2]/coef(fit3_rob)[2])*100 
+
+
+
+
+
+
+```
+
+
+
+
+
+
+
+# Calculation of LOQ (CV = 15% and 20%) 
+
+## y = ax^b
+## log(y) = log(a) + blog(x)
+## intercept = log(a)
+## slope = b
+
+
+```{r}
+
+
+
+f = c("HSA1", "HSA2", "HSA3", "HSA4", "HSA5", "HSA6", "HSA7")
+
+ind = which(rownames(mat1)%in%f) 
+
+
+
+
+fit5 <- lm(log(mat1$CV[ind]) ~ log(mat1$Mean_HSA_uM[ind]))
+
+summary(fit5)
+
+# from the data CV are high at lower conc of HSA and vice versa. So here, we could probably exclude outliers using the robust fits
+
+
+#Robust fit
+
+
+fit5_rob = lmrob(log(mat1$CV[ind]) ~ log(mat1$Mean_HSA_uM[ind]))
+
+summary(fit5_rob)
+
+coef(fit5_rob)[2] 
+
+summary(fit5_rob)$coefficients[,4]  
+
+summary(fit5_rob)$r.squared 
+
+summary(fit5_rob)$coefficients[2,2]  
+
+(summary(fit5_rob)$coefficients[2,2]/coef(fit5_rob)[2])*100 
+
+
+
+
+
+
+
+
+loq15 = function(x){
+  exp((log(0.15/(exp(coef(x)[1])/100))/coef(x)[2]))
+}
+loq15(fit5) # conc. that can be determined at CV=15% 
+
+
+loq20 = function(x){
+  exp((log(0.20/(exp(coef(x)[1])/100))/coef(x)[2]))
+}
+loq20(fit5) # conc. that can be determined at CV = 20%
+
+
+library(ggplot2)
+ggplot(mat1) + 
+  geom_point(aes(y = CV, x = Mean_HSA_uM)) 
+
+```
+
+
+
+
+
+
+# Calculation of the LOD and LOQ (S/N ratio)
+
+##1.) Linear fit (lineare Anpassung)
+```{r}
+
+f = c("HSA0","HSAd", "HSAc", "HSAb", "HSAa", "HSA1", "HSA2", "HSA3", "HSA4")
+
+ind = which(rownames(mat1)%in%f) 
+
+
+
+f1 = c("HSA0","HSAd", "HSAc", "HSAb", "HSAa", "HSA1", "HSA2", "HSA3", "HSA4")
+
+ind1 = which(rownames(mat2)%in%f1) 
+
+
+
+mat5 = data.frame(mat2$Mean_SN[ind1], mat1$Mean_HSA_uM[ind])
+
+colnames(mat5) = c("Mean_SN", "Mean_HSA_uM")
+
+fit6 = lm(mat5$Mean_SN ~mat5$Mean_HSA_uM) # Only the concentrations up to the 4th standard above the zero sample (HSA0) were taken into account because the increase in S / N values is proportional to the concentrations only in this range
+
+summary(fit6)
+
+coef(fit6)[1] # Intercept
+
+coef(fit6)[2] # Slope/steigung 
+
+
+
+
+
+#Robust fit
+
+
+fit6_rob = lmrob(mat5$Mean_SN ~ mat5$Mean_HSA_uM)
+
+summary(fit6_rob)
+
+coef(fit6_rob)[2] 
+
+summary(fit6_rob)$coefficients[,4]  
+
+summary(fit6_rob)$r.squared 
+
+summary(fit6_rob)$coefficients[2,2]  
+
+(summary(fit6_rob)$coefficients[2,2]/coef(fit6_rob)[2])*100 
+
+
+
+
+
+
+
+lod = function(x){
+  (3-coef(x)[1])/coef(x)[2]
+}
+
+lod(fit6) # lowest quantity of analyte that can be distinguished from the noise i.e 3 sigma away from blank
+
+
+lloq = function(x){
+  (10-coef(x)[1])/coef(x)[2]
+}
+lloq(fit6) # conc. which gives a signal as high as 10x noise of the blank
+
+
+```
+
+
+
+
+
+##2.) Potenz Anpassung (exponential model) 
+# y = (Bo*B1^lnX) * E
+# log(y) = logBo + logB1*logX + log E
+```{r}
+
+
+
+
+fit7 = lm(log(mat5$Mean_SN) ~ I(log(mat5$Mean_HSA_uM)))
+
+summary(fit7)
+
+#logBo = 2.51306
+# Bo = exp(2.51306)
+
+
+
+
+
+#Robust fit
+
+
+fit7_rob = lmrob(log(mat5$Mean_SN) ~ I(log(mat5$Mean_HSA_uM)))
+
+summary(fit7_rob)
+
+coef(fit7_rob)[2] 
+
+summary(fit7_rob)$coefficients[,4]  
+
+summary(fit7_rob)$r.squared 
+
+summary(fit7_rob)$coefficients[2,2]  
+
+(summary(fit7_rob)$coefficients[2,2]/coef(fit7_rob)[2])*100 
+
+
+
+
+
+
+lod_pa = function(x){
+  exp((log(3/exp(coef(x)[1]))/coef(x)[2]))
+}
+
+lod_pa(fit7)
+
+lloq_pa = function(x){
+  exp((log(10/exp(coef(x)[1]))/coef(x)[2]))
+}
+
+lloq_pa(fit7)
+
+
+# Linear fit is better than the exponential fit
+
+```
+
+
+
+
+
+
+
+##3.) Quadratische Anpassung (polynomial regression model)
+# y = β0 + β1*X + β2*X^2 + E
+```{r}
+
+fit8 = lm(mat5$Mean_SN ~ mat5$Mean_HSA_uM + I(mat5$Mean_HSA_uM^2))
+
+summary(fit8)
+
+
+
+
+#Robust fit
+
+
+fit8_rob = lmrob(mat5$Mean_SN ~ mat5$Mean_HSA_uM + I(mat5$Mean_HSA_uM^2))
+
+summary(fit8_rob)
+
+coef(fit8_rob)[2] 
+
+summary(fit8_rob)$coefficients[,4]  
+
+summary(fit8_rob)$r.squared 
+
+summary(fit8_rob)$coefficients[2,2]  
+
+(summary(fit8_rob)$coefficients[2,2]/coef(fit8_rob)[2])*100 
+
+
+
+
+
+lod_qa = function(x){
+ n = -3 + coef(x)[1]
+  (-coef(x)[2] + sqrt((coef(x)[2]^2) - 4*coef(x)[3]*n))/ (2*coef(x)[3])
+}
+
+lod_qa(fit8)
+
+
+lloq_qa = function(x){
+  m = -10 + coef(x)[1]
+  (-coef(x)[2] + sqrt((coef(x)[2]^2) - 4*coef(x)[3]*m))/ (2*coef(x)[3])
+}
+
+lloq_qa(fit8)
+
+
+
+```
+
+
+
+
+
+
+# Plotting S/N HAS
+```{r}
+##############################
+
+ggplot(mat5,aes(mat1$Mean_HSA_uM[1:9], mat2$Mean_SN[1:9])) + labs(title = paste("S/N HAS"), x = "mean Human Serum Albumin uM", y = "S/N Human Serum Albumin") +
+  geom_point() + stat_smooth(method = "lm",
+    col = "black",
+    se = FALSE,
+    size = .5)
+##############################
+
+```
+
+
+
+
+
+
+
+
+# Intra-Assay precision for calculaing recovery (resumee sheet excel.)
+```{r}
+
+
+iap <- data.frame(c(summary(fit1)$r.squared, 
+  summary(fit1)$coefficients[2,2], summary(fit1)$r.square, 
+  (summary(fit1)$coefficients[2,2]/coef(fit1)[2])*100,
+  (summary(fit1)$r.squared)*100,  loq15(fit5), lloq(fit6), lloq(fit8),
+  0, (lloq(fit6) + lloq(fit8) + 0)/2 , 0))
+
+rownames(iap) = c("Wiederfindungsrate","Fehler.abs","Regrssionskoeffizi
+  ent","%F Intra-Assay","Wiederfindungsrate%", "LOQ(CV15%)", 
+  "LOQ(S/N=10)", "LOQ_Quadfit", "LOQ(S/N=10)potfit","LOQmean(S/N=10)", "LOD(S/N = 3)PotFit")
+
+colnames(iap) =c("Glutaric Acid")
+
+iap
+```
+
